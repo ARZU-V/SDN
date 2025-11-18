@@ -4,7 +4,8 @@ import numpy as np
 import logging
 import os
 import time
-from ultralytics import YOLO  # --- EDIT: New import ---
+import torch
+from ultralytics import YOLO
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -12,58 +13,75 @@ logger = logging.getLogger("detection-service")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 
-# --- EDIT: New YOLOv8 Segmentation Model Setup ---
-# This will download 'yolov8s-seg.pt' the first time it's run.
+# --- FAST SETUP: Use Nano Model ---
+# Using YOLOv8 Nano for maximum speed
 try:
-    model = YOLO("yolov8s-seg.pt")
-    logger.info("Successfully loaded YOLOv8s-seg model.")
+    model = YOLO("yolov8n-seg.pt")
+    logger.info("Successfully loaded YOLOv8n-seg (Nano) model.")
 except Exception as e:
     logger.error(f"Could not load YOLO model. {e}")
     exit()
-# --- End of Setup ---
+# ----------------------------------
 
-# --- EDIT: This function is now completely different ---
 def segment_and_color_frame(frame):
     """
-    Performs segmentation on a frame and colors in the 'person' class.
+    Performs fast segmentation:
+    1. Tints the person red (semi-transparent) so they are visible.
+    2. Draws a solid red outline around them.
     """
-    # Create a copy to draw on, and a color for the fill
-    # We use BGR format for OpenCV, so (0, 0, 255) is RED.
+    # Color (BGR) -> Red
     color = (0, 0, 255)
     
     try:
-        # Run the YOLOv8 model on the frame
-        # verbose=False silences the text output for each frame
-        results = model(frame, verbose=False)
+        # Run YOLOv8 Nano
+        # verbose=False: Don't print to console (saves time)
+        results = model(frame, verbose=False, retina_masks=False)
         
-        # Check if any masks were found
-        if results[0].masks:
-            # Loop through all detected masks
-            for cls, mask in zip(results[0].boxes.cls.int(), results[0].masks.data):
+        # Only proceed if masks are found
+        if results[0].masks is not None:
+            # 1. Filter classes to find only 'person' (class index 0)
+            person_indices = (results[0].boxes.cls == 0).nonzero(as_tuple=True)[0]
+            
+            if len(person_indices) > 0:
+                # 2. Combine all person masks
+                person_masks = results[0].masks.data[person_indices]
+                combined_mask = torch.any(person_masks, dim=0)
+                mask_np = combined_mask.cpu().numpy().astype(np.uint8)
                 
-                # We only care about class '0', which is 'person'
-                if cls == 0:
-                    # 1. Get the mask (it's a tensor), move to CPU, and convert to numpy
-                    mask_np = mask.cpu().numpy().astype(np.uint8)
-                    
-                    # 2. Resize the mask from its small size to the full frame size
-                    # We use INTER_NEAREST for a sharp edge, no blur.
-                    full_size_mask = cv2.resize(mask_np, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
+                # 3. Resize mask to frame size
+                # INTER_NEAREST is fastest
+                full_size_mask = cv2.resize(mask_np, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
+                
+                # Convert to 0-255 range for Contours
+                full_size_mask = full_size_mask * 255
+                
+                # --- FEATURE 1: Outline ---
+                # Find the edges of the mask
+                contours, _ = cv2.findContours(full_size_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Draw the contour (Outline) -> Thickness 3
+                cv2.drawContours(frame, contours, -1, color, 3)
+                
+                # --- FEATURE 2: Transparent Tint ---
+                # Create boolean mask
+                mask_bool = full_size_mask > 0
+                
+                # Extract strictly the pixels belonging to the person (Region of Interest)
+                # This is faster than blending the whole frame
+                roi = frame[mask_bool]
+                
+                # Create a red block of the same shape
+                overlay = np.full_like(roi, color)
+                
+                # Blend: 70% Original Image + 30% Red Overlay
+                blended = cv2.addWeighted(roi, 0.7, overlay, 0.3, 0)
+                
+                # Put the blended pixels back into the frame
+                frame[mask_bool] = blended
 
-                    # 3. Create a boolean version of the mask
-                    mask_bool = full_size_mask.astype(bool)
-                    
-                    # 4. Use "Numpy magic" to apply the color
-                    # This finds all pixels in the 'frame' where 'mask_bool' is True
-                    # and sets their color to our defined 'color'.
-                    frame[mask_bool] = color
-                    
     except Exception as e:
-        logger.error(f"Error in segment_and_color_frame: {e}")
+        logger.error(f"Error in segmentation: {e}")
         
     return frame
-
-# -----------------------------------------------------------------
 
 def processing_loop():
     logger.info(f"Connecting to Redis at {REDIS_HOST}")
@@ -71,24 +89,24 @@ def processing_loop():
     
     while True:
         try:
-            # Wait for a frame from the 'raw_frames' queue (blocking pop)
+            # Get the latest frame
             _, frame_data = r.brpop("raw_frames")
             
-            # 1. Decode
+            # Decode
             nparr = np.frombuffer(frame_data, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if frame is None:
                 continue
 
-            # 2. Process (Run our new segmentation function)
+            # Process (Segmentation with Tint + Outline)
             processed_frame = segment_and_color_frame(frame)
 
-            # 3. Encode (Increased quality for less blur)
-            ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            # Encode
+            ret, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
             if not ret:
                 continue
             
-            # 4. Push to the next queue
+            # Push to broadcast queue
             r.lpush("processed_frames", buffer.tobytes())
             r.ltrim("processed_frames", 0, 10)
 
