@@ -1,0 +1,60 @@
+# This file tells Docker how to connect all our services into a "service chain".
+
+version: '3.8'
+
+services:
+  # VNF - The Message Queue "Broker"
+  redis:
+    image: "redis:alpine" # Use a standard, lightweight Redis image
+    hostname: redis
+
+  # VNF 1: Ingest Service
+  ingest:
+    build: .  # Tells Docker to build an image using the Dockerfile in this folder
+    command: python ingest_service/main.py # This is the command it will run
+    depends_on:
+      - redis # Won't start until Redis is running
+    environment:
+      - PHONE_WS_URL=ws://192.168.1.101:8080/video # <-- IMPORTANT! Check your phone IP
+      - REDIS_HOST=redis
+    # We add this so the container can connect to your phone on the local network
+    network_mode: "host" 
+
+  # VNF 2: Detection Service (the "NFV" part)
+  detection:
+    build: .
+    command: python detection_service/main.py
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+    # This service is purely internal, so it doesn't need network_mode: host
+    
+    # --- SCALABILITY ---
+    # If your detection is slow, change 'replicas: 1' to 'replicas: 3'
+    # and Docker will automatically run 3 of them in parallel.
+    deploy:
+      replicas: 1 
+
+  # VNF 3: Broadcast Service
+  broadcast:
+    build: .
+    command: python broadcast_service/main.py
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+    ports:
+      # Expose port 8765 to your whole network
+      # This is what your Quest will connect to.
+      - "8765:8765" 
+
+  # VNF 4: Web Server (to serve index.html)
+  web-server:
+    build: .
+    # This service just runs a simple HTTP server in the /app folder
+    command: python -m http.server 8000
+    ports:
+      # Expose port 8000 to your whole network
+      # This is the URL you open in your Quest.
+      - "8000:8000"
