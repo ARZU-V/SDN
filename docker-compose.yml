@@ -7,6 +7,9 @@ services:
   redis:
     image: "redis:alpine" # Use a standard, lightweight Redis image
     hostname: redis
+    # --- FIX 1: Expose Redis to the host (laptop) ---
+    ports:
+      - "6379:6379"
 
   # VNF 1: Ingest Service
   ingest:
@@ -16,9 +19,18 @@ services:
       - redis # Won't start until Redis is running
     environment:
       - PHONE_WS_URL=ws://192.168.1.101:8080/video # <-- IMPORTANT! Check your phone IP
-      - REDIS_HOST=redis
+      # --- FIX 2: Use localhost because we are on host network ---
+      - REDIS_HOST=127.0.0.1
     # We add this so the container can connect to your phone on the local network
-    network_mode: "host" 
+    network_mode: "host"
+    
+    # --- CRITICAL CAMERA SETTINGS ---
+    privileged: true  # Gives full hardware access
+    devices:
+      # Map ONLY the devices that actually exist on your system
+      - "/dev/video0:/dev/video0"
+      - "/dev/video1:/dev/video1"
+    # -------------------------------
 
   # VNF 2: Detection Service (the "NFV" part)
   detection:
@@ -27,7 +39,7 @@ services:
     depends_on:
       - redis
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST=redis # Stays 'redis' because it's on the internal bridge network
     # This service is purely internal, so it doesn't need network_mode: host
     
     # --- SCALABILITY ---
@@ -43,11 +55,11 @@ services:
     depends_on:
       - redis
     environment:
-      - REDIS_HOST=redis
-    ports:
-      # Expose port 8765 to your whole network
-      # This is what your Quest will connect to.
-      - "8765:8765" 
+      # --- FIX 3: Use localhost because we are moving to host network ---
+      - REDIS_HOST=127.0.0.1
+    # --- FIX 4: Use host network to ensure Quest can connect ---
+    network_mode: "host" 
+    # Ports are removed because host mode uses the laptop's ports directly
 
   # VNF 4: Web Server (to serve index.html)
   web-server:
