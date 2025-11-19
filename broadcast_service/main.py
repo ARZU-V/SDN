@@ -46,11 +46,29 @@ async def broadcast_loop():
                 await asyncio.sleep(0.5)
                 continue
             
-            res = r.brpop("processed_frames", timeout=0.5)
+            # 1. Get Video Frame
+            res = r.brpop("processed_frames", timeout=0.1)
+            
+            # 2. Get Latest Caption (Non-blocking)
+            # The caption service updates this key every few seconds
+            caption_data = r.get("latest_caption")
+            caption = caption_data.decode('utf-8') if caption_data else ""
+
             if res:
                 frame_b64 = base64.b64encode(res[1]).decode('utf-8')
-                await asyncio.gather(*[c.send(frame_b64) for c in clients], return_exceptions=True)
+                
+                # 3. Create JSON Package (Video + Caption)
+                payload = json.dumps({
+                    "image": frame_b64,
+                    "caption": caption
+                })
+                
+                # 4. Send the package
+                await asyncio.gather(*[c.send(payload) for c in clients], return_exceptions=True)
+            
+            # Small sleep to prevent CPU spike
             await asyncio.sleep(0.001)
+            
         except Exception as e:
             logger.error(f"Broadcast error: {e}")
             await asyncio.sleep(1)
@@ -61,9 +79,9 @@ async def main():
     port = 8765
     ssl_context = None
 
-    # --- CHECK FOR SSL CERTIFICATES ---
+    # Check for SSL Certificates
     if os.path.exists("/app/cert.pem") and os.path.exists("/app/key.pem"):
-        logger.info("SSL Certificates found! Enabling WSS (Secure WebSocket).")
+        logger.info("SSL Certificates found! Enabling WSS.")
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_context.load_cert_chain("/app/cert.pem", "/app/key.pem")
     else:
@@ -71,7 +89,6 @@ async def main():
 
     logger.info(f"Starting Broadcast Server on 0.0.0.0:{port}")
     
-    # Start server with SSL context (if it exists)
     async with websockets.serve(ws_handler, "0.0.0.0", port, ssl=ssl_context):
         await asyncio.Future()
 
