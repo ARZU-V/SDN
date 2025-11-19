@@ -1,241 +1,456 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>WebXR Video Stream</title>
-    <meta charset="utf-g">
-    <!-- This viewport is essential for WebXR and mobile -->
+    <title>SDN-VR // COMMAND INTERFACE</title>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        body { 
-            margin: 0; 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; 
-            background-color: #000;
-            color: #fff;
-            overflow: hidden; /* Prevent scrolling */
+        body {
+            margin: 0;
+            background-color: #050505;
+            color: #ffffff;
+            font-family: 'Rajdhani', sans-serif;
+            overflow: hidden;
         }
-        #message-box {
-            position: fixed;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 10px 20px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border-radius: 8px;
-            z-index: 1000;
-            display: none;
-            font-size: 14px;
+
+        /* --- 2D UI OVERLAY (Glassmorphism Style) --- */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            display: flex; flex-direction: column;
+            justify-content: space-between; align-items: center;
+            padding: 40px; box-sizing: border-box; z-index: 10;
+            background: radial-gradient(circle at center, transparent 0%, #000000 120%);
+            transition: opacity 1s ease;
+        }
+
+        /* Header with animated pulse */
+        #header-panel {
+            background: rgba(10, 20, 30, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            padding: 20px 60px;
+            border-radius: 4px;
+            text-align: center;
+            pointer-events: auto;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
+            animation: pulseBorder 4s infinite alternate;
+        }
+
+        h1 { margin: 0; font-weight: 700; letter-spacing: 6px; font-size: 28px; text-transform: uppercase; color: #fff; }
+        .sub-text { font-size: 14px; color: #00ffff; letter-spacing: 2px; margin-top: 5px; opacity: 0.8; }
+
+        /* Control Cluster */
+        #controls {
+            display: flex; gap: 20px;
+            pointer-events: auto;
+            margin-bottom: 80px;
+            background: rgba(10, 20, 30, 0.6);
+            padding: 15px;
+            border-radius: 50px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            color: #00ffff;
+            padding: 12px 30px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            border-radius: 30px;
+            transition: all 0.3s ease;
+            min-width: 160px;
+        }
+
+        .mode-btn:hover {
+            background: rgba(0, 255, 255, 0.1);
+            border-color: #fff;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .mode-btn.active {
+            background: #00ffff;
+            color: #000;
+            box-shadow: 0 0 25px rgba(0, 255, 255, 0.6);
+            font-weight: 700;
+        }
+
+        /* Connection Status Dot */
+        #status-dot {
+            display: inline-block; width: 10px; height: 10px;
+            background-color: #ff0000; border-radius: 50%;
+            margin-right: 8px; box-shadow: 0 0 10px #ff0000;
+            transition: all 0.5s ease;
+        }
+
+        @keyframes pulseBorder {
+            0% { border-color: rgba(0, 255, 255, 0.1); }
+            100% { border-color: rgba(0, 255, 255, 0.5); }
+        }
+
+        /* VR Button Position */
+        #vr-button-container {
+            position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+            z-index: 9999; pointer-events: auto;
         }
         
-        
-        #OurVRButton {
-            position: fixed !important;
-            bottom: 30px !important; /* Raised it a bit */
-            left: 50% !important;
-            transform: translateX(-50%) !important;
-            z-index: 9999 !important;
-            
-            /* Make it bigger and more obvious */
-            padding: 16px 32px !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            border: 2px solid #000 !important;
-            border-radius: 12px !important;
-            font-size: 18px !important;
-            font-weight: bold !important;
-            cursor: pointer !important;
-            width: auto !important; /* Override default fixed width */
+        #loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 20;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 24px; letter-spacing: 5px;
+            transition: opacity 1s ease;
         }
+
+        #VRButton { display: none !important; } 
     </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
-    <div id="message-box">Connecting to stream...</div>
+
+    <div id="loading-overlay">SYSTEM INITIALIZING...</div>
+
+    <!-- 2D HUD -->
+    <div id="ui-layer">
+        <div id="header-panel">
+            <h1>SDN-VR TERMINAL</h1>
+            <div class="sub-text"><span id="status-dot"></span><span id="status-text">OFFLINE</span></div>
+        </div>
+
+        <div id="controls">
+            <button id="btn-seg" class="mode-btn active" onclick="window.setMode('segmentation')">SEGMENTATION</button>
+            <button id="btn-det" class="mode-btn" onclick="window.setMode('detection')">DETECTION</button>
+        </div>
+    </div>
+
+    <div id="vr-button-container"></div>
 
     <script type="module">
-        // --- FIX ---
-        // We now import Three.js and VRButton as JavaScript modules.
-        // This is much more reliable.
-        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js';
-        import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/VRButton.js';
-        // -----------
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+        import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
+        import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory.js';
 
-        let scene, camera, renderer;
-        let videoCanvas, videoContext, videoTexture, videoScreen;
-
-        // --- !! IMPORTANT !! ---
-        // This should be your PC's IP address
+        // --- CONFIG ---
         const YOUR_PC_IP = "192.168.1.24"; 
-        // -----------------
+        // Auto-switch to secure WebSocket if page is HTTPS
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const WS_URL = `${protocol}://${YOUR_PC_IP}:8765`;
         
-        // This now correctly points to your PC's server
-        const WEBSOCKET_URL = `ws://${YOUR_PC_IP}:8765`;
-        
-        // We can't know the frame size, so we'll start with a common one
-        // and adjust it when the first frame arrives.
-        const FRAME_WIDTH = 640;
-        const FRAME_HEIGHT = 480;
+        // --- VISUAL CONFIG ---
+        const SCREEN_RADIUS = 4.0;  // Distance from eyes
+        const SCREEN_WIDTH_ARC = 3.5; // Physical width along the curve
+        const SCREEN_HEIGHT = 2.0;    // Physical height
+        const CURVE_ANGLE = Math.PI / 3; // 60 degrees curve (IMAX style)
 
-        const msgBox = document.getElementById('message-box');
-        let firstFrameReceived = false;
+        let scene, camera, renderer, ws;
+        let videoTexture, screenMesh, frameMesh;
+        let controllers = [];
+        let teleportGroup;
+        let raycaster, marker;
+        let stars, grid; // For animation
 
-        function showMessage(msg) {
-            msgBox.textContent = msg;
-            msgBox.style.display = 'block';
-        }
+        // Mode Switcher Logic
+        window.setMode = function(mode) {
+            const btnSeg = document.getElementById('btn-seg');
+            const btnDet = document.getElementById('btn-det');
+            if(btnSeg && btnDet) {
+                btnSeg.className = mode === 'segmentation' ? 'mode-btn active' : 'mode-btn';
+                btnDet.className = mode === 'detection' ? 'mode-btn active' : 'mode-btn';
+            }
+            if(ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ "mode": mode }));
+            }
+        };
 
         function init() {
-            // Scene
+            // 1. Scene
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x222222); // Dark background
+            scene.background = new THREE.Color(0x020205); // Very dark blue/black
+            scene.fog = new THREE.FogExp2(0x020205, 0.03); // Depth fog
 
-            // Camera
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 0, 1); // Start slightly back
+            // 2. Player Rig
+            teleportGroup = new THREE.Group();
+            scene.add(teleportGroup);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 1000);
+            teleportGroup.add(camera);
+            teleportGroup.position.set(0, 0, 0); // Center of the world
 
-            // Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            // 3. Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+            scene.add(ambient);
+            const spot = new THREE.SpotLight(0x00ffff, 1.0);
+            spot.position.set(5, 10, 5);
+            spot.angle = 0.5;
+            spot.penumbra = 1;
+            scene.add(spot);
+
+            // 4. Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // Enable WebXR
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // --- FIX ---
-            // Get the button from the script, give it our ID, then add it
-            const vrButton = VRButton.createButton(renderer);
-            vrButton.id = "OurVRButton"; // Apply our custom ID
-            document.body.appendChild(vrButton);
-            // -----------
+            // 5. Environment
+            createStarfield();
+            createFloorGrid();
 
-            // Create the "screen" to display the video
-            
-            // 1. Create an in-memory canvas to draw video frames on
-            videoCanvas = document.createElement('canvas');
-            videoCanvas.width = FRAME_WIDTH;
-            videoCanvas.height = FRAME_HEIGHT;
-            videoContext = videoCanvas.getContext('2d');
-            videoContext.fillStyle = '#000000'; // Start with a black screen
-            videoContext.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
-            videoContext.fillStyle = 'white';
-            videoContext.font = "30px Arial";
-            videoContext.textAlign = "center";
-            videoContext.fillText("Waiting for stream...", FRAME_WIDTH / 2, FRAME_HEIGHT / 2);
+            // 6. The "Holoscreen"
+            createCurvedScreen();
 
+            // 7. Connect Network
+            connectWS();
 
-            // 2. Create a Three.js texture from that canvas
-            videoTexture = new THREE.CanvasTexture(videoCanvas);
+            // 8. Controls
+            setupControllers();
+            setupVRButton();
 
-            // 3. Create the screen geometry (a simple plane)
-            // --- EDIT: Made the screen 50% larger (3 units wide instead of 2) ---
-            const screenGeometry = new THREE.PlaneGeometry(3, 3);
-
-            // 4. Create the material using our video texture
-            const screenMaterial = new THREE.MeshBasicMaterial({ 
-                map: videoTexture,
-                side: THREE.DoubleSide
-            });
-
-            // 5. Create the final mesh (the screen) and add it to the scene
-            videoScreen = new THREE.Mesh(screenGeometry, screenMaterial);
-            // --- EDIT: Pushed the screen back to -2.5m to make it comfortable ---
-            videoScreen.position.set(0, 1.6, -2.5); // Position it in front of the user (X, Y, Z)
-            scene.add(videoScreen);
-            
-            // Add a simple floor
-            const floorGeo = new THREE.PlaneGeometry(10, 10);
-            const floorMat = new THREE.MeshBasicMaterial({ color: 0x444444 });
-            const floor = new THREE.Mesh(floorGeo, floorMat);
-            floor.rotation.x = -Math.PI / 2; // Rotate to be flat
-            floor.position.y = -0.5; // Position below the screen
-            scene.add(floor);
-
-            // Start the WebSocket connection
-            connectWebSocket();
-
-            // Start the animation loop
+            // 9. Animation Loop
             renderer.setAnimationLoop(render);
+            window.addEventListener('resize', onResize);
 
-            // Handle window resizing
-            window.addEventListener('resize', onWindowResize, false);
+            // Hide loading screen
+            setTimeout(() => {
+                const overlay = document.getElementById('loading-overlay');
+                overlay.style.opacity = '0';
+                setTimeout(() => overlay.style.display = 'none', 1000);
+            }, 1500);
         }
 
-        function connectWebSocket() {
-            showMessage(`Connecting to ${WEBSOCKET_URL}...`);
-            const ws = new WebSocket(WEBSOCKET_URL);
-            
-            // We need an Image object to load the base64 data
-            const img = new Image();
-            img.onload = () => {
-                // When the image loads, draw it to our hidden canvas
-                
-                // On the very first frame, resize canvas and screen
-                if (!firstFrameReceived) {
-                    firstFrameReceived = true;
-                    videoCanvas.width = img.naturalWidth;
-                    videoCanvas.height = img.naturalHeight;
-                    
-                    // Adjust the 3D plane's aspect ratio
-                    // This logic still works: e.g., video is 16:9 (H/W = 0.5625)
-                    // The plane is 3x3, so scale.y = 0.5625.
-                    // Final plane is 3 wide by (3 * 0.5625) = 1.6875 tall. (Still 16:9)
-                    const aspectRatio = img.naturalHeight / img.naturalWidth;
-                    videoScreen.scale.y = aspectRatio;
-                }
+        function createStarfield() {
+            const geometry = new THREE.BufferGeometry();
+            const count = 3000;
+            const pos = new Float32Array(count * 3);
+            for(let i=0; i<count*3; i++) {
+                pos[i] = (Math.random() - 0.5) * 100;
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            const material = new THREE.PointsMaterial({
+                size: 0.05, color: 0x00ffff, transparent: true, opacity: 0.6,
+                blending: THREE.AdditiveBlending
+            });
+            stars = new THREE.Points(geometry, material);
+            scene.add(stars);
+        }
 
-                videoContext.drawImage(img, 0, 0, videoCanvas.width, videoCanvas.height);
-                // Tell Three.js that the texture needs to be updated
-                videoTexture.needsUpdate = true;
-            };
+        function createFloorGrid() {
+            // Infinite-looking grid
+            grid = new THREE.GridHelper(80, 80, 0x00ffff, 0x111122);
+            grid.position.y = -1.5; // Below feet
+            // Fade out grid in distance using transparent material modification would be complex,
+            // relying on FogExp2 instead.
+            scene.add(grid);
+        }
+
+        function createCurvedScreen() {
+            // 1. Video Texture Placeholder
+            const canvas = document.createElement('canvas');
+            canvas.width = 1280; canvas.height = 720;
+            const ctx = canvas.getContext('2d');
+            
+            // Draw initial "No Signal" pattern
+            ctx.fillStyle = '#050510'; ctx.fillRect(0,0,1280,720);
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 5; 
+            ctx.strokeRect(100, 100, 1080, 520);
+            ctx.fillStyle = '#00ffff'; ctx.font = '60px Arial'; ctx.textAlign='center';
+            ctx.fillText("AWAITING DATA STREAM...", 640, 360);
+
+            videoTexture = new THREE.CanvasTexture(canvas);
+            videoTexture.minFilter = THREE.LinearFilter;
+            videoTexture.magFilter = THREE.LinearFilter;
+
+            // 2. Curved Geometry (Cylinder Slice)
+            // We use openEnded=true to remove top/bottom caps
+            // thetaStart = -angle/2 centers the curve
+            const geometry = new THREE.CylinderGeometry(
+                SCREEN_RADIUS, SCREEN_RADIUS, SCREEN_HEIGHT, 
+                40, 1, true, -CURVE_ANGLE/2, CURVE_ANGLE
+            );
+            
+            // Flip scale.x to -1 so texture draws on the INSIDE (facing us)
+            // This creates a CONCAVE screen (curves towards viewer)
+            geometry.scale(-1, 1, 1); 
+
+            const material = new THREE.MeshBasicMaterial({ 
+                map: videoTexture, 
+                side: THREE.DoubleSide, // Ensure visibility from all angles
+                transparent: true,
+                opacity: 0.95
+            });
+
+            screenMesh = new THREE.Mesh(geometry, material);
+            // Position: Eye level (y=1.6), pushed forward (z = -radius)
+            // We adjust Z slightly so the center of the arc is at optimal distance
+            screenMesh.position.set(0, 1.6, -1.0); 
+            scene.add(screenMesh);
+
+            // 3. Glowing Frame (Optional aesthetic touch)
+            // Simple wireframe box behind it to give "tech" feel
+            const frameGeo = new THREE.BoxGeometry(SCREEN_WIDTH_ARC + 0.2, SCREEN_HEIGHT + 0.2, 0.1);
+            const frameEdges = new THREE.EdgesGeometry(frameGeo);
+            const frameMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.3 });
+            frameMesh = new THREE.LineSegments(frameEdges, frameMat);
+            frameMesh.position.set(0, 1.6, -SCREEN_RADIUS + 1.0); // Approximate placement
+            // We won't curve the frame perfectly as it's complex, just a backing element
+            // Actually, let's skip the complex frame and just use the screen itself.
+        }
+
+        function connectWS() {
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            const canvas = videoTexture.image; // Get the canvas back
+            const ctx = canvas.getContext('2d');
+
+            statusText.innerText = "SEARCHING...";
+            statusDot.style.backgroundColor = "#ffff00";
+            statusDot.style.boxShadow = "0 0 10px #ffff00";
+
+            ws = new WebSocket(WS_URL);
 
             ws.onopen = () => {
-                showMessage("Stream connected!");
-                setTimeout(() => { msgBox.style.display = 'none'; }, 2000);
+                statusText.innerText = "ONLINE";
+                statusDot.style.backgroundColor = "#00ff00";
+                statusDot.style.boxShadow = "0 0 15px #00ff00";
             };
 
-            ws.onmessage = (event) => {
-                // When we get a message (a frame), set the image source.
-                // This triggers the img.onload function above.
-                img.src = 'data:image/jpeg;base64,' + event.data;
+            const img = new Image();
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                videoTexture.needsUpdate = true; // Essential for Three.js to refresh texture
+            };
+
+            ws.onmessage = (e) => {
+                img.src = "data:image/jpeg;base64," + e.data;
             };
 
             ws.onclose = () => {
-                showMessage("Stream disconnected. Retrying in 3s...");
-                firstFrameReceived = false; // Reset for re-connection
-                
-                // Draw a "disconnected" message on the canvas
-                videoContext.fillStyle = '#222';
-                videoContext.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
-                videoContext.fillStyle = 'white';
-                videoContext.font = "30px Arial";
-                videoContext.textAlign = "center";
-                videoContext.fillText("Disconnected", FRAME_WIDTH / 2, FRAME_HEIGHT / 2);
-                videoTexture.needsUpdate = true;
-                
-                // Reset screen scale
-                videoScreen.scale.y = 1.0;
-
-                // Try to reconnect after 3 seconds
-                setTimeout(connectWebSocket, 3000);
-            };
-
-            ws.onerror = (err) => {
-                showMessage("Connection error. Check console and IP.");
-                console.error("WebSocket Error:", err);
+                statusText.innerText = "OFFLINE";
+                statusDot.style.backgroundColor = "#ff0000";
+                statusDot.style.boxShadow = "0 0 10px #ff0000";
+                setTimeout(connectWS, 2000);
             };
         }
 
-        function onWindowResize() {
+        function setupVRButton() {
+            const btn = VRButton.createButton(renderer);
+            // Force Visibility and Style
+            btn.style.cssText = `
+                display: block !important;
+                padding: 12px 30px;
+                border: 2px solid #00ffff;
+                border-radius: 30px;
+                background: rgba(0,0,0,0.8);
+                color: #00ffff;
+                font-family: 'Rajdhani', sans-serif;
+                font-weight: 700;
+                font-size: 16px;
+                cursor: pointer;
+                text-transform: uppercase;
+                letter-spacing: 3px;
+                box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+                transition: all 0.3s;
+            `;
+            
+            // If HTTPS error detected by VRButton logic
+            if (btn.innerHTML && btn.innerHTML.includes("HTTPS")) {
+                btn.style.borderColor = "#ff0000";
+                btn.style.color = "#ff0000";
+                btn.style.boxShadow = "0 0 20px rgba(255, 0, 0, 0.5)";
+            }
+
+            document.getElementById('vr-button-container').appendChild(btn);
+        }
+
+        function setupControllers() {
+            // Teleport Marker
+            marker = new THREE.Mesh(
+                new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8 })
+            );
+            marker.visible = false;
+            scene.add(marker);
+
+            raycaster = new THREE.Raycaster();
+            const factory = new XRControllerModelFactory();
+
+            for (let i = 0; i < 2; i++) {
+                const c = renderer.xr.getController(i);
+                c.addEventListener('selectstart', () => c.userData.isSelecting = true);
+                c.addEventListener('selectend', onSelectEnd);
+                
+                const g = renderer.xr.getControllerGrip(i);
+                g.add(factory.createControllerModel(g));
+                teleportGroup.add(g);
+
+                // Laser
+                const l = new THREE.Line(
+                    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-5)]),
+                    new THREE.LineBasicMaterial({ color: 0x00ffff })
+                );
+                l.name = 'line'; l.scale.z = 0;
+                c.add(l);
+                teleportGroup.add(c);
+                controllers.push(c);
+            }
+        }
+
+        function onSelectEnd() {
+            this.userData.isSelecting = false;
+            if (marker.visible) teleportGroup.position.set(marker.position.x, teleportGroup.position.y, marker.position.z);
+        }
+
+        function onResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
         function render() {
-            // Render the scene
+            // 1. Animate Environment
+            const time = performance.now() * 0.0001;
+            if(stars) stars.rotation.y = time * 0.5; // Slow star rotation
+            if(grid) grid.position.z = (time * 10) % 10; // Infinite grid movement effect
+
+            // 2. Teleport Logic
+            let intersecting = false;
+            for (const c of controllers) {
+                if (c.userData.isSelecting) {
+                    const tempM = new THREE.Matrix4().identity().extractRotation(c.matrixWorld);
+                    raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+                    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempM);
+                    // Floor intersection (y = -1.5 roughly)
+                    const t = -(raycaster.ray.origin.y + 1.5) / raycaster.ray.direction.y; 
+                    if (t > 0 && t < 20) {
+                        marker.position.copy(raycaster.ray.origin).add(raycaster.ray.direction.multiplyScalar(t));
+                        // Keep marker on floor
+                        marker.position.y = -1.48; 
+                        marker.visible = true; intersecting = true;
+                        c.getObjectByName('line').scale.z = t;
+                    }
+                } else { c.getObjectByName('line').scale.z = 0; }
+            }
+            if (!intersecting) marker.visible = false;
+
             renderer.render(scene, camera);
         }
 
-        // Start everything
         init();
-
     </script>
 </body>
 </html>

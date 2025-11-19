@@ -1,72 +1,65 @@
-# This file tells Docker how to connect all our services into a "service chain".
-
 version: '3.8'
 
 services:
   # VNF - The Message Queue "Broker"
   redis:
-    image: "redis:alpine" # Use a standard, lightweight Redis image
+    image: "redis:alpine"
     hostname: redis
-    # --- FIX 1: Expose Redis to the host (laptop) ---
+    # Expose Redis to the host so ingest/broadcast can find it at 127.0.0.1
     ports:
       - "6379:6379"
 
-  # VNF 1: Ingest Service
+  # VNF 1: Ingest Service (Captures Video)
   ingest:
-    build: .  # Tells Docker to build an image using the Dockerfile in this folder
-    command: python ingest_service/main.py # This is the command it will run
+    build: .
+    command: python ingest_service/main.py
     depends_on:
-      - redis # Won't start until Redis is running
+      - redis
     environment:
-      - PHONE_WS_URL=ws://192.168.1.101:8080/video # <-- IMPORTANT! Check your phone IP
-      # --- FIX 2: Use localhost because we are on host network ---
+      - PHONE_WS_URL=ws://192.168.1.101:8080/video
+      # Uses localhost because it is on 'host' network
       - REDIS_HOST=127.0.0.1
-    # We add this so the container can connect to your phone on the local network
     network_mode: "host"
     
-    # --- CRITICAL CAMERA SETTINGS ---
-    privileged: true  # Gives full hardware access
+    # --- WEBCAM PERMISSIONS ---
+    privileged: true
     devices:
-      # Map ONLY the devices that actually exist on your system
       - "/dev/video0:/dev/video0"
       - "/dev/video1:/dev/video1"
-    # -------------------------------
 
-  # VNF 2: Detection Service (the "NFV" part)
+  # VNF 2: Detection Service (AI Processing)
   detection:
     build: .
     command: python detection_service/main.py
     depends_on:
       - redis
     environment:
-      - REDIS_HOST=redis # Stays 'redis' because it's on the internal bridge network
-    # This service is purely internal, so it doesn't need network_mode: host
-    
-    # --- SCALABILITY ---
-    # If your detection is slow, change 'replicas: 1' to 'replicas: 3'
-    # and Docker will automatically run 3 of them in parallel.
+      # Uses 'redis' hostname because it is on internal docker network
+      - REDIS_HOST=redis
     deploy:
-      replicas: 1 
+      replicas: 1
 
-  # VNF 3: Broadcast Service
+  # VNF 3: Broadcast Service (Sends Video to Quest)
   broadcast:
     build: .
     command: python broadcast_service/main.py
     depends_on:
       - redis
     environment:
-      # --- FIX 3: Use localhost because we are moving to host network ---
       - REDIS_HOST=127.0.0.1
-    # --- FIX 4: Use host network to ensure Quest can connect ---
-    network_mode: "host" 
-    # Ports are removed because host mode uses the laptop's ports directly
+    network_mode: "host"
+    
+    # --- SSL CERTIFICATES ---
+    # Maps the certificates from your project folder into the container
+    # This enables WSS:// support
+    volumes:
+      - ./cert.pem:/app/cert.pem
+      - ./key.pem:/app/key.pem
 
-  # VNF 4: Web Server (to serve index.html)
+  # VNF 4: Legacy Web Server (Backup)
+  # (You are currently using run_secure.py instead of this)
   web-server:
     build: .
-    # This service just runs a simple HTTP server in the /app folder
     command: python -m http.server 8000
     ports:
-      # Expose port 8000 to your whole network
-      # This is the URL you open in your Quest.
       - "8000:8000"
